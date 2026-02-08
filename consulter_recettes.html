@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Consulter mes recettes</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <!-- Styles moved to style.css -->
+</head>
+<body>
+
+    <header class="site-header">
+        <div class="brand"><a href="index.html">Mon Projet</a></div>
+        <nav class="nav-links">
+            <a href="index.html">Accueil</a>
+            <a href="recette.html">Générateur</a>
+            <a href="consulter_recettes.html">Consulter</a>
+        </nav>
+    </header>
+
+    <h1>Mes recettes</h1>
+
+    <div class="container">
+        <div class="search-bar">
+            <input id="searchInput" class="input" placeholder="Rechercher par nom ou ingrédient">
+            <button id="exportBtn" class="btn">Exporter PDF</button>
+            <label class="btn secondary import-label"><input id="importFile" class="hidden-file-input" type="file" accept="application/json">Importer</label>
+            <button id="builderBtn" class="btn secondary">Créer un fichier</button>
+        </div>
+        <div class="help-box">
+            <strong>Import :</strong> Vous pouvez télécharger un modèle ou créer votre fichier de recettes directement avec le bouton "Créer un fichier".
+        </div>
+        <div id="recipesContainer" class="recipe-list"></div>
+
+        <div id="notif" class="notif" aria-live="polite"></div>
+
+        <div style="margin-top:16px;">
+            <button onclick="location.href='index.html'">Retour à l'accueil</button>
+            <button onclick="location.href='recette.html'">Retour au générateur</button>
+        </div>
+    </div>
+
+    <!-- JSON Builder Modal -->
+    <div id="jsonBuilderModal" class="json-builder-modal">
+        <div class="json-builder-backdrop"></div>
+        <div class="json-builder-content" role="dialog" aria-modal="true">
+            <h3 style="margin-top:0;">Créer un fichier de recettes</h3>
+            <p style="color: #666; margin-bottom: 12px;">Ajoutez vos recettes ci-dessous, puis téléchargez le fichier.</p>
+            
+            <div class="recipe-form-row">
+                <label for="builderName">Nom de la recette :</label>
+                <input type="text" id="builderName" placeholder="Ex: Salade de tomates">
+            </div>
+            <div class="recipe-form-row">
+                <label for="builderIng">Ingrédients (un par ligne) :</label>
+                <textarea id="builderIng" placeholder="Tomates&#10;Huile d'olive&#10;Sel"></textarea>
+            </div>
+            <button id="builderAddBtn" class="btn">Ajouter cette recette</button>
+            
+            <div style="margin-top: 16px;">
+                <p style="font-weight: 600; color: #2c3e50; margin-bottom: 8px;">Recettes ajoutées :</p>
+                <div id="builderList" class="json-builder-list">
+                    <p style="color: #999; text-align: center;">Aucune recette pour le moment</p>
+                </div>
+            </div>
+            
+            <div class="json-builder-actions">
+                <button id="builderCancel" class="btn secondary">Annuler</button>
+                <button id="builderDownload" class="btn" style="opacity: 0.5; cursor: not-allowed;">Télécharger fichier</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function loadRecipes(){
+            const recipes = JSON.parse(localStorage.getItem('myRecipes')) || [];
+            const container = document.getElementById('recipesContainer');
+            container.innerHTML = '';
+            if(recipes.length === 0){
+                container.innerHTML = '<p>Aucune recette enregistrée.</p>';
+                return;
+            }
+            const query = (document.getElementById('searchInput')?.value || '').toLowerCase().trim();
+            recipes.forEach((r, i) => {
+                if(query){
+                    const hay = ((r.name||'') + ' ' + (r.ing||[]).join(' ')).toLowerCase();
+                    if(!hay.includes(query)) return;
+                }
+                const card = document.createElement('div'); card.className = 'recipe-card';
+                const info = document.createElement('div'); info.className = 'recipe-info';
+
+                const title = document.createElement('div'); title.innerHTML = '<strong>' + (r.name || 'Recette') + '</strong>';
+                const ing = document.createElement('div'); ing.className = 'ingredients-list'; ing.textContent = (r.ing || []).join(', ');
+                info.appendChild(title); info.appendChild(ing);
+
+                const actions = document.createElement('div'); actions.className = 'recipe-actions';
+                const viewBtn = document.createElement('button'); viewBtn.textContent = 'Afficher'; viewBtn.className='btn secondary'; viewBtn.onclick = ()=> { ing.style.display = ing.style.display === 'none' ? 'block' : 'none'; };
+                const editBtn = document.createElement('button'); editBtn.textContent = 'Modifier'; editBtn.className='btn'; editBtn.onclick = ()=> enterEditMode(i, info, title, ing, actions);
+                const delBtn = document.createElement('button'); delBtn.textContent = 'Supprimer'; delBtn.className='btn secondary'; delBtn.onclick = ()=> deleteRecipe(i);
+                actions.appendChild(viewBtn); actions.appendChild(editBtn); actions.appendChild(delBtn);
+
+                card.appendChild(info); card.appendChild(actions);
+                container.appendChild(card);
+            });
+        }
+
+        // show confirm modal and return a Promise<boolean>
+        function showConfirmModal(message){
+            return new Promise(resolve => {
+                let modal = document.getElementById('confirmModal');
+                if(!modal){
+                    modal = document.createElement('div'); modal.id = 'confirmModal'; modal.className = 'modal';
+                    modal.innerHTML = `
+                        <div class="modal-backdrop" tabindex="-1"></div>
+                        <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="modalMessage">
+                            <div id="modalMessage"></div>
+                            <div class="modal-actions">
+                                <button id="modalCancel" class="btn secondary">Annuler</button>
+                                <button id="modalConfirm" class="btn">Confirmer</button>
+                            </div>
+                        </div>`;
+                    document.body.appendChild(modal);
+                }
+                const msg = document.getElementById('modalMessage'); msg.textContent = message;
+                modal.classList.add('show');
+                let previousFocusConfirm = document.activeElement;
+                setTimeout(()=>document.getElementById('modalConfirm').focus(), 100);
+                const onCancel = ()=>{ cleanup(); if(previousFocusConfirm) previousFocusConfirm.focus(); resolve(false); };
+                const onConfirm = ()=>{ cleanup(); if(previousFocusConfirm) previousFocusConfirm.focus(); resolve(true); };
+                const handleEscapeConfirm = (e) => {
+                    if(e.key === 'Escape' && modal.classList.contains('show')){
+                        onCancel();
+                    }
+                };
+                function cleanup(){
+                    modal.classList.remove('show');
+                    modal.querySelector('#modalCancel').removeEventListener('click', onCancel);
+                    modal.querySelector('#modalConfirm').removeEventListener('click', onConfirm);
+                    document.removeEventListener('keydown', handleEscapeConfirm);
+                }
+                modal.querySelector('#modalCancel').addEventListener('click', onCancel);
+                modal.querySelector('#modalConfirm').addEventListener('click', onConfirm);
+                document.addEventListener('keydown', handleEscapeConfirm);
+            });
+        }
+
+        async function deleteRecipe(index){
+            const ok = await showConfirmModal('Supprimer cette recette ?');
+            if(!ok) return;
+            const recipes = JSON.parse(localStorage.getItem('myRecipes')) || [];
+            recipes.splice(index,1);
+            localStorage.setItem('myRecipes', JSON.stringify(recipes));
+            setNotif('Recette supprimée.');
+            setTimeout(()=>{ clearNotif(); loadRecipes(); }, 600);
+        }
+
+        function enterEditMode(index, infoEl, titleEl, ingEl, actionsEl){
+            const recipes = JSON.parse(localStorage.getItem('myRecipes')) || [];
+            const r = recipes[index] || {name:'', ing:[]};
+
+            const nameInput = document.createElement('input');
+            nameInput.type = 'text';
+            nameInput.value = r.name || '';
+            nameInput.style.marginBottom = '8px';
+            nameInput.style.width = '100%';
+
+            const ingInput = document.createElement('input');
+            ingInput.type = 'text';
+            ingInput.value = (r.ing || []).join(', ');
+            ingInput.style.width = '100%';
+
+            infoEl.innerHTML = '';
+            infoEl.appendChild(nameInput);
+            infoEl.appendChild(ingInput);
+
+            actionsEl.innerHTML = '';
+            const saveBtn = document.createElement('button'); saveBtn.textContent = 'Enregistrer'; saveBtn.className='btn';
+            const cancelBtn = document.createElement('button'); cancelBtn.textContent = 'Annuler'; cancelBtn.className='btn secondary';
+
+            saveBtn.onclick = ()=>{
+                const newName = nameInput.value.trim();
+                const newIng = ingInput.value.split(',').map(s=>s.trim()).filter(Boolean);
+                if(!newName){ setNotif('Le nom ne peut pas être vide'); return; }
+                recipes[index] = { name: newName, ing: newIng };
+                localStorage.setItem('myRecipes', JSON.stringify(recipes));
+                setNotif('Recette mise à jour.');
+                setTimeout(()=>{ clearNotif(); loadRecipes(); }, 600);
+            };
+
+            cancelBtn.onclick = ()=>{ loadRecipes(); };
+
+            actionsEl.appendChild(saveBtn); actionsEl.appendChild(cancelBtn);
+        }
+
+        window.addEventListener('DOMContentLoaded', loadRecipes);
+        // helper for notifications
+        function setNotif(msg){
+            const n = document.getElementById('notif'); n.textContent = msg || '';
+        }
+        function clearNotif(){ document.getElementById('notif').textContent = ''; }
+
+        // PDF Preview function
+        function showPDFPreview(recipes, type){
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+            let y = 18;
+            doc.setFontSize(18); doc.text('Mes recettes', 14, y); y += 10;
+            doc.setFontSize(12);
+            recipes.forEach((r, idx) => {
+                if(idx > 0) y += 4;
+                doc.setFontSize(14); doc.text(r.name || 'Recette', 14, y); y += 8;
+                doc.setFontSize(11);
+                const ingText = (r.ing || []).join(', ');
+                const lines = doc.splitTextToSize(ingText, 180);
+                doc.text(lines, 14, y);
+                y += lines.length * 6 + 6;
+                if(y > 270){ doc.addPage(); y = 20; }
+            });
+            
+            // Show preview modal
+            const modal = document.getElementById('pdfPreviewModal');
+            const container = document.getElementById('pdfPreviewContainer');
+            container.innerHTML = '<p>📄 Aperçu du PDF :</p><ul>' + recipes.map(r=> `<li><strong>${r.name}</strong><br><em>${(r.ing||[]).join(', ')}</em></li>`).join('') + '</ul>';
+            modal.classList.add('show');
+            
+            let pdfPreviousFocus = document.activeElement;
+            setTimeout(()=>document.getElementById('previewDownload').focus(), 100);
+            document.getElementById('previewCancel').onclick = ()=>{ 
+                modal.classList.remove('show');
+                if(pdfPreviousFocus) pdfPreviousFocus.focus();
+            };
+            document.getElementById('previewDownload').onclick = ()=>{
+                doc.save('recettes.pdf');
+                modal.classList.remove('show');
+                if(pdfPreviousFocus) pdfPreviousFocus.focus();
+            };
+            // Fermer PDF preview avec Escape
+            const handlePdfEscape = (e) => {
+                if(e.key === 'Escape' && modal.classList.contains('show')){
+                    document.getElementById('previewCancel').click();
+                }
+            };
+            document.addEventListener('keydown', handlePdfEscape);
+        }
+
+        // search filter and import/export wiring
+        document.addEventListener('DOMContentLoaded', ()=>{
+            const s = document.getElementById('searchInput');
+            if(s) s.addEventListener('input', loadRecipes);
+            const exportBtn = document.getElementById('exportBtn');
+            const importFile = document.getElementById('importFile');
+            const builderBtn = document.getElementById('builderBtn');
+            
+            // JSON Builder
+            if(builderBtn){
+                let builderRecipes = [];
+                let previousFocus = null;
+                builderBtn.addEventListener('click', ()=>{
+                    builderRecipes = [];
+                    previousFocus = document.activeElement;
+                    const modal = document.getElementById('jsonBuilderModal');
+                    modal.classList.add('show');
+                    updateBuilderList();
+                    setTimeout(()=>document.getElementById('builderName').focus(), 100);
+                });
+                document.getElementById('builderCancel').onclick = ()=>{
+                    document.getElementById('jsonBuilderModal').classList.remove('show');
+                    if(previousFocus) previousFocus.focus();
+                };
+                // Fermer avec Escape
+                const handleEscape = (e) => {
+                    if(e.key === 'Escape' && document.getElementById('jsonBuilderModal').classList.contains('show')){
+                        document.getElementById('builderCancel').click();
+                    }
+                };
+                document.addEventListener('keydown', handleEscape);
+                document.getElementById('builderAddBtn').onclick = ()=>{
+                    const name = document.getElementById('builderName').value.trim();
+                    const ingText = document.getElementById('builderIng').value.trim();
+                    if(!name || !ingText){ setNotif('Remplissez nom et ingrédients'); return; }
+                    const ing = ingText.split('\n').map(s=>s.trim()).filter(Boolean);
+                    builderRecipes.push({name, ing});
+                    document.getElementById('builderName').value = '';
+                    document.getElementById('builderIng').value = '';
+                    updateBuilderList();
+                };
+                function updateBuilderList(){
+                    const list = document.getElementById('builderList');
+                    if(builderRecipes.length === 0){
+                        list.innerHTML = '<p style="color: #999; text-align: center;">Aucune recette pour le moment</p>';
+                        document.getElementById('builderDownload').style.opacity = '0.5';
+                        document.getElementById('builderDownload').style.cursor = 'not-allowed';
+                        document.getElementById('builderDownload').disabled = true;
+                    } else {
+                        list.innerHTML = builderRecipes.map((r, idx) => `
+                            <div class="json-builder-item">
+                                <div>
+                                    <div class="json-builder-item-name">${r.name}</div>
+                                    <div class="json-builder-item-ing">${r.ing.join(', ')}</div>
+                                </div>
+                                <button class="btn secondary" onclick="window.removeBuilderRecipe(${idx})">Supprimer</button>
+                            </div>
+                        `).join('');
+                        document.getElementById('builderDownload').style.opacity = '1';
+                        document.getElementById('builderDownload').style.cursor = 'pointer';
+                        document.getElementById('builderDownload').disabled = false;
+                    }
+                }
+                window.removeBuilderRecipe = (idx)=>{
+                    builderRecipes.splice(idx, 1);
+                    updateBuilderList();
+                };
+                document.getElementById('builderDownload').onclick = ()=>{
+                    const blob = new Blob([JSON.stringify(builderRecipes, null, 2)], {type:'application/json'});
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a'); a.href = url; a.download = 'mes_recettes.json'; a.click(); URL.revokeObjectURL(url);
+                    document.getElementById('jsonBuilderModal').classList.remove('show');
+                    setNotif('Fichier téléchargé. Vous pouvez le réimporter.');
+                };
+            }
+            
+            if(exportBtn) exportBtn.addEventListener('click', ()=>{
+                const recipes = JSON.parse(localStorage.getItem('myRecipes')) || [];
+                if(recipes.length === 0){ setNotif('Aucune recette à exporter.'); return; }
+                showPDFPreview(recipes, 'recettes');
+            });
+            if(importFile) importFile.addEventListener('change', (e)=>{
+                const f = e.target.files[0]; if(!f) return;
+                const reader = new FileReader();
+                reader.onload = ()=>{
+                    const text = reader.result;
+                    try{
+                        const data = JSON.parse(text);
+                        if(Array.isArray(data) && data.every(it => it.name && Array.isArray(it.ing))){
+                            localStorage.setItem('myRecipes', JSON.stringify(data));
+                            setNotif('Import réussi.');
+                            setTimeout(()=>{ clearNotif(); loadRecipes(); }, 600);
+                            return;
+                        } else setNotif('Format JSON invalide. Assurez-vous que c\'est un tableau d\'objets {name, ing}');
+                    }catch(err){ setNotif('Erreur : fichier JSON invalide.'); }
+                };
+                reader.readAsText(f);
+            });
+        });
+    </script>
+
+</body>
+</html>

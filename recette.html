@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Menu & Courses</title>
+    <!-- page styles moved to style.css -->
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+</head>
+<body>
+
+    <header class="site-header">
+        <div class="brand"><a href="index.html">Mon Projet</a></div>
+        <nav class="nav-links">
+            <a href="index.html">Accueil</a>
+            <a href="recette.html">Générateur</a>
+            <a href="consulter_recettes.html">Consulter</a>
+        </nav>
+    </header>
+
+    <h2>Gestionnaire de Repas</h2>
+
+    <section>
+        <h3>1. Ajouter une Recette</h3>
+        <label for="recipeName">Nom du plat</label>
+        <input class="input" type="text" id="recipeName" placeholder="Nom du plat" aria-required="true">
+        <label for="ingredientsList">Ingrédients (séparés par des virgules)</label>
+        <input class="input" type="text" id="ingredientsList" placeholder="Ingrédients (séparés par des virgules)">
+        <div id="formMessage" class="form-message" aria-live="polite"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button id="addBtn" class="btn" onclick="addRecipe()">Ajouter</button>
+            <button type="button" class="btn secondary" onclick="location.href='consulter_recettes.html'">Consulter mes recettes</button>
+        </div>
+    </section>
+
+    <section>
+        <h3>2. Planning de la Semaine</h3>
+        <p class="hint">Sélectionnez jusqu'à <strong>3 recettes</strong> pour chaque jour (ex: petit-déjeuner / déjeuner / dîner)</p>
+        <table id="weekTable">
+            <tr><th>Jour</th><th>Repas 1</th><th>Repas 2</th><th>Repas 3</th></tr>
+        </table>
+    </section>
+
+    <section>
+        <h3>3. Liste de Courses</h3>
+        <ul id="shoppingList"></ul>
+        <div style="display:flex;gap:8px;align-items:center;">
+            <button onclick="generateList()" class="btn">Générer la liste</button>
+            <button id="exportPDFBtn" onclick="exportShoppingPDF()" class="btn secondary">Exporter PDF</button>
+        </div>
+    </section>
+
+    <!-- PDF Preview Modal for shopping list -->
+    <div id="pdfPreviewModal" class="pdf-preview-modal">
+        <div class="pdf-preview-backdrop"></div>
+        <div class="pdf-preview-content" role="dialog" aria-modal="true">
+            <h3 style="margin-top:0;">Aperçu du PDF</h3>
+            <div id="pdfPreviewContainer" style="border: 1px solid #ccc; padding: 10px; background:#f9f9f9; max-height:50vh; overflow-y:auto;"></div>
+            <div class="pdf-preview-actions">
+                <button id="previewCancel" class="btn secondary">Annuler</button>
+                <button id="previewDownload" class="btn">Télécharger PDF</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let recipes = JSON.parse(localStorage.getItem('myRecipes')) || [];
+        const days = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"];
+        document.addEventListener('DOMContentLoaded', ()=>{
+            // validation: disable add if empty
+            const addBtn = document.getElementById('addBtn');
+            const nameEl = document.getElementById('recipeName');
+            const ingEl = document.getElementById('ingredientsList');
+            function validate(){
+                if(nameEl.value.trim() && ingEl.value.trim()){
+                    addBtn.disabled = false; addBtn.classList.remove('disabled');
+                    document.getElementById('formMessage').textContent = '';
+                } else { addBtn.disabled = true; }
+            }
+            nameEl.addEventListener('input', validate);
+            ingEl.addEventListener('input', validate);
+            validate();
+        });
+
+        function addRecipe() {
+            const name = document.getElementById('recipeName').value;
+            const ing = document.getElementById('ingredientsList').value.split(',').map(s => s.trim());
+            if(name && ing[0]) {
+                recipes.push({ name, ing });
+                localStorage.setItem('myRecipes', JSON.stringify(recipes));
+                document.getElementById('formMessage').textContent = 'Recette ajoutée.';
+                setTimeout(()=> location.reload(), 400);
+            }
+        }
+
+        function init() {
+            const table = document.getElementById('weekTable');
+            days.forEach(day => {
+                let options = recipes.map(r => `<option value="${r.name}">${r.name} (${r.ing.length} ingr.)</option>`).join('');
+                const selectCell = `<td><select class="day-select"><option value="">-- Choisir --</option>${options}</select></td>`;
+                // Create three selects (Repas 1, Repas 2, Repas 3)
+                table.innerHTML += `<tr><td>${day}</td>${selectCell}${selectCell}${selectCell}</tr>`;
+            });
+        }
+
+        function generateList() {
+            const selects = document.querySelectorAll('.day-select');
+            let needed = [];
+            selects.forEach(s => {
+                const recipe = recipes.find(r => r.name === s.value);
+                if(recipe) needed = [...needed, ...recipe.ing];
+            });
+            const unique = [...new Set(needed)];
+            document.getElementById('shoppingList').innerHTML = unique.map(i => `<li>${i}</li>`).join('');
+        }
+
+        function exportShoppingPDF(){
+            const selects = document.querySelectorAll('.day-select');
+            let needed = [];
+            selects.forEach(s => {
+                const recipe = recipes.find(r => r.name === s.value);
+                if(recipe) needed = [...needed, ...recipe.ing];
+            });
+            const unique = [...new Set(needed)];
+            if(unique.length === 0){ document.getElementById('formMessage').textContent = 'Aucun ingrédient à exporter.'; return; }
+            
+            // Show preview
+            const modal = document.getElementById('pdfPreviewModal');
+            const container = document.getElementById('pdfPreviewContainer');
+            container.innerHTML = '<p><strong>📄 Liste de courses</strong></p><ul>' + unique.map(i=> `<li>☐ ${i}</li>`).join('') + '</ul>';
+            modal.classList.add('show');
+            
+            let pdfPreviousFocus = document.activeElement;
+            setTimeout(()=>document.getElementById('previewDownload').focus(), 100);
+            
+            // Store unique items for download
+            window.shoppingListToExport = unique;
+            
+            document.getElementById('previewCancel').onclick = ()=>{ 
+                modal.classList.remove('show');
+                if(pdfPreviousFocus) pdfPreviousFocus.focus();
+            };
+            document.getElementById('previewDownload').onclick = ()=>{
+                const { jsPDF } = window.jspdf;
+                const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+                const pageWidth = doc.internal.pageSize.getWidth();
+                const margin = 40;
+                let y = 60;
+                // Header
+                doc.setFontSize(20); doc.setTextColor('#2c3e50'); doc.text('Liste de courses', margin, y);
+                doc.setFontSize(11); doc.setTextColor('#555');
+                const now = new Date(); doc.text(now.toLocaleString(), pageWidth - margin - 120, y);
+                y += 24;
+                // Draw a line
+                doc.setDrawColor(220); doc.setLineWidth(0.5); doc.line(margin, y, pageWidth - margin, y); y += 14;
+                // Items in two columns
+                doc.setFontSize(12); doc.setTextColor('#111');
+                const columnGap = 20;
+                const colWidth = (pageWidth - margin * 2 - columnGap) / 2;
+                let col = 0;
+                unique.forEach((item, idx) => {
+                    const x = margin + col * (colWidth + columnGap);
+                    const lines = doc.splitTextToSize(item, colWidth - 10);
+                    doc.text('• ' + lines[0], x, y);
+                    for(let i=1;i<lines.length;i++){ doc.text(lines[i], x+8, y + i*12); }
+                    y += lines.length * 12 + 6;
+                    if(y > doc.internal.pageSize.getHeight() - 80){
+                        if(col === 0){ col = 1; y = 60; }
+                        else { doc.addPage(); y = 60; col = 0; }
+                    }
+                });
+                // Footer
+                const pageCount = doc.internal.getNumberOfPages();
+                for(let i=1;i<=pageCount;i++){
+                    doc.setPage(i);
+                    doc.setFontSize(9);
+                    doc.setTextColor('#888');
+                    doc.text(`Page ${i} / ${pageCount}`, pageWidth/2, doc.internal.pageSize.getHeight() - 30, { align: 'center' });
+                }
+                doc.save('liste_courses.pdf');
+                modal.classList.remove('show');
+                if(pdfPreviousFocus) pdfPreviousFocus.focus();
+            };
+            // Fermer avec Escape
+            const handlePdfEscape = (e) => {
+                if(e.key === 'Escape' && modal.classList.contains('show')){
+                    document.getElementById('previewCancel').click();
+                }
+            };
+            document.addEventListener('keydown', handlePdfEscape);
+        }
+
+        init();
+    </script>
+    <a href="index.html">Retour à la page d'accueil</a>
+</body>
+</html>
+
